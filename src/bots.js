@@ -208,7 +208,7 @@ async function work(job) {
   const plan = await run(lead, `${past ? `지금까지의 대화:\n${past}\n\n` : ""}${asker}의 요청: ${job.text}`,
     system(lead, `당신은 이 팀의 팀장입니다. ${roster}\n\n${AUTO_RULE}\n\n` +
       `나눠 맡기면 좋은 일이면 짧게 계획을 말하고 답 끝에 다음 블록을 붙이세요 (최대 ${MAX_TASKS}개, 맡은 팀원들은 동시에 일합니다):\n${TASK_FORMAT}\n` +
-      "간단한 일이면 나누지 말고 바로 최종 결과를 답하세요."), progress(planId));
+      `${asker}가 특정 팀원에게 맡기라고 했으면 그대로 그 팀원에게 맡기세요. 그 밖에 간단한 일이면 나누지 말고 바로 최종 결과를 답하세요.`), progress(planId));
   if (running.stopped) return stopped(planId);
   if (!plan.ok) return failed(planId, plan);
   let { rest: leadText, items } = takeBlock(plan.text, "팀작업");
