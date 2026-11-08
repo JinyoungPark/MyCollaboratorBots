@@ -19,7 +19,7 @@ jobs:
       - run: npm install
       - run: npm run test:unit
       # 윈도우에서 만들 때는 exe에 아이콘·버전 정보를 넣는다
-      - run: npx electron-builder --win nsis zip --x64 -c.win.signAndEditExecutable=true --publish never
+      - run: npx electron-builder --win nsis zip --x64 --config.win.signAndEditExecutable=true --publish never
       - uses: actions/upload-artifact@v4
         with: { name: MyCollaboratorBots-windows, path: "dist/MyCollaboratorBots-*windows*" }
   mac:
