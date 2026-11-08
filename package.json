@@ -1,0 +1,97 @@
+{
+  "name": "mycollaboratorbots",
+  "version": "0.1.0",
+  "description": "여러 AI 봇을 한 팀으로 — 팀장 봇이 일을 나눠 팀원 봇에게 맡기고 결과를 모아 답하는 데스크톱 앱 (내 문서 검색과 연동)",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "electron test/bots-test.js",
+    "test:unit": "node test/unit-test.js",
+    "version:patch": "node scripts/bump-version.js patch",
+    "version:minor": "node scripts/bump-version.js minor",
+    "version:major": "node scripts/bump-version.js major",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win nsis zip --x64",
+    "dist": "electron-builder --mac --win"
+  },
+  "keywords": [],
+  "author": "KR ICT",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JinyoungPark/MyCollaboratorBots.git"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
+  },
+  "productName": "MyCollaboratorBots",
+  "build": {
+    "appId": "kr.co.krs.mycollaboratorbots",
+    "productName": "MyCollaboratorBots",
+    "asar": false,
+    "files": [
+      "src/**",
+      "ui/**",
+      "assets/icon.png",
+      "package.json",
+      "!test/**",
+      "!scripts/**",
+      "!README.md",
+      "!CHANGELOG.md",
+      "!.github/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity",
+      "artifactName": "MyCollaboratorBots-${version}-mac-${arch}.${ext}",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "MyCollaboratorBots"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false,
+      "artifactName": "MyCollaboratorBots-${version}-windows-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "MyCollaboratorBots",
+      "installerLanguages": [
+        "ko_KR"
+      ],
+      "language": "1042",
+      "unicode": true,
+      "artifactName": "MyCollaboratorBots-${version}-windows-setup.${ext}"
+    }
+  }
+}

@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'">
+<title>MyCollaboratorBots</title>
+<style>
+:root {
+  --bg: #f5f7f9; --panel: #ffffff; --ink: #17222c; --muted: #5d6b78; --line: #dfe5ea;
+  --accent: #0e5a7a; --accent-soft: #e3eff5; --warn: #9c5a1f; --warn-soft: #f9efe4; --ok: #1f7a4a;
+  --shadow: 0 1px 2px rgba(20, 35, 50, .06), 0 4px 16px rgba(20, 35, 50, .05);
+  --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12181d; --panel: #1a2228; --ink: #e4eaef; --muted: #93a1ad; --line: #2b363f;
+    --accent: #5fb4d6; --accent-soft: #1d3440; --warn: #e2a56b; --warn-soft: #33281d; --ok: #6fcf97;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 14px; letter-spacing: -0.01em; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); }
+
+.app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100vh; }
+header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 16px; }
+.top { display: flex; align-items: center; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 800; font-size: 15px; white-space: nowrap; flex: 1; }
+.brand img { width: 26px; height: 26px; border-radius: 7px; }
+.brand small { font-weight: 400; color: var(--muted); font-size: 12px; }
+.icon-btn { height: 34px; border: 1px solid var(--line); background: var(--panel); border-radius: 9px; padding: 0 12px; white-space: nowrap; }
+.icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+.docs-chip { font-size: 12px; border-radius: 14px; padding: 4px 10px; border: 1px solid var(--line); white-space: nowrap; cursor: pointer; background: var(--panel); }
+.docs-chip.ok { color: var(--ok); }
+.docs-chip.half { color: var(--warn); }
+.docs-chip.no { color: var(--muted); }
+.upd-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 7px 12px; background: var(--accent-soft); border: 1px solid var(--line); border-radius: 9px; font-size: 13px; }
+.upd-bar[hidden] { display: none; }
+.upd-bar span { flex: 1; }
+.upd-bar small { color: var(--muted); margin-left: 6px; }
+main { overflow: hidden; min-height: 0; }
+
+.primary, .ghost { height: 34px; border-radius: 9px; padding: 0 14px; border: 1px solid var(--accent); white-space: nowrap; }
+.primary { background: var(--accent); color: #fff; }
+.ghost { background: var(--panel); border-color: var(--line); }
+.ghost:hover { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: .55; cursor: default; }
+button.link { border: none; background: none; color: var(--accent); padding: 0; font-size: 12.5px; }
+.nav-add { border: none; background: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+.nav-add:hover { background: var(--bg); color: var(--accent); }
+.help { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.grow { flex: 1; }
+.rt-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.rt-chip { display: inline-block; font-size: 11px; border-radius: 10px; padding: 1px 8px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.rt-chip.run { color: var(--accent); border-color: var(--accent); }
+.rt-h2 { margin: 14px 0 6px; font-size: 13px; }
+code { background: var(--bg); border-radius: 4px; padding: 0 4px; font-size: 12.5px; }
+pre { background: var(--bg); border-radius: 8px; padding: 8px 10px; overflow-x: auto; }
+blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--muted); }
+h3 { font-size: 14px; margin: 10px 0 4px; }
+
+/* 대화 상자 */
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); width: min(560px, 94vw); max-height: 88vh; }
+dialog::backdrop { background: rgba(10, 20, 30, .35); }
+dialog form { display: flex; flex-direction: column; max-height: 88vh; }
+.dlg-head { padding: 14px 18px; font-weight: 700; border-bottom: 1px solid var(--line); }
+.dlg-body { padding: 12px 18px; overflow-y: auto; }
+.dlg-foot { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.fld { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); margin: 8px 0; flex: 1; }
+.fld input, .fld select, .fld textarea, .field { height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 0 9px; color: var(--ink); font-size: 13.5px; }
+.fld textarea { height: auto; padding: 7px 9px; resize: vertical; }
+.fld-row { display: flex; gap: 10px; }
+.fld[hidden] { display: none; }
+.days { display: inline-flex; gap: 8px; flex-wrap: wrap; color: var(--ink); }
+.days label { display: flex; gap: 3px; align-items: center; }
+.days input { width: auto; height: auto; }
+
+/* 설정 */
+#setDlg { width: min(760px, 96vw); }
+.set-wrap { display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 420px; }
+.set-nav { border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+.set-nav button { text-align: left; border: none; background: none; border-radius: 8px; padding: 8px 10px; }
+.set-nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.set-body { padding: 4px 18px 16px; overflow-y: auto; max-height: 70vh; }
+.set-body section { display: none; }
+.set-body section.on { display: block; }
+.ai-row { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.ai-row > div:first-child { flex: 1; min-width: 0; }
+.ai-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.5; }
+.ai-row .btns { display: flex; flex-direction: column; gap: 6px; }
+.ok { color: var(--ok); } .no { color: var(--muted); } .wait { color: var(--accent); }
+.row-add { display: flex; gap: 6px; }
+.row-add .field { flex: 1; }
+.kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; }
+.kv span:nth-child(odd) { color: var(--muted); }
+.kv span { word-break: break-all; }
+
+.toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 10px; font-size: 13px; z-index: 10; max-width: 90vw; }
+.toast button { margin-left: 10px; border: none; background: none; color: inherit; text-decoration: underline; }
+@media (max-width: 640px) { .set-wrap { grid-template-columns: 1fr; } .set-nav { flex-direction: row; border-right: none; border-bottom: 1px solid var(--line); overflow-x: auto; } .brand small { display: none; } }
+</style>
+<link rel="stylesheet" href="bots.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="top">
+      <div class="brand"><img src="logo.png" alt=""><span>MyCollaboratorBots</span><small id="verLabel"></small></div>
+      <span class="docs-chip no" id="docsChip">📚 내 문서 검색</span>
+      <button class="icon-btn" id="btnSettings">⚙ 설정</button>
+    </div>
+    <div class="upd-bar" id="updBar" hidden></div>
+  </header>
+  <main><div id="botBody"></div></main>
+</div>
+
+<dialog id="setDlg"><form method="dialog">
+  <div class="dlg-head">설정</div>
+  <div class="set-wrap">
+    <nav class="set-nav" id="setNav">
+      <button type="button" data-sec="ai" class="on">AI 연결</button>
+      <button type="button" data-sec="docs">내 문서 검색</button>
+      <button type="button" data-sec="about">정보 · 업데이트</button>
+    </nav>
+    <div class="set-body">
+      <section data-sec="ai" class="on">
+        <h3>AI 연결 (내 구독 계정)</h3>
+        <p class="help">봇은 이 PC에 로그인한 공식 프로그램(Claude Code · Codex · Google Antigravity)으로 일합니다. 이 앱은 비밀번호·토큰을 읽거나 저장하지 않습니다.
+          봇마다 어느 AI·모델을 쓸지는 봇 설정에서 고릅니다.</p>
+        <div id="aiRows"><p class="help">불러오는 중…</p></div>
+      </section>
+      <section data-sec="docs">
+        <h3>내 문서 검색 (MyDocSearch)</h3>
+        <div id="docsInfo"></div>
+        <p class="help">봇은 내 문서 검색의 <b>찾기·읽기 도구</b>로 내 PC 문서를 근거로 답합니다 (내 문서 검색이 꺼져 있어도 됨).
+          <b>앱 작업</b>(문서 저장·모음 담기·루틴 실행·OneDrive 보내기)과 근거 문서 열기는 내 문서 검색이 켜져 있어야 하고,
+          조작은 내 문서 검색 → 설정 → AI·보안의 ‘외부 AI가 앱을 조작하도록 허용’이 켜져 있어야 합니다. 봇마다의 권한(보기만·물어보고·바로)과 둘 다 필요합니다.</p>
+        <button class="ghost" type="button" id="btnDocsRefresh">다시 확인</button>
+      </section>
+      <section data-sec="about">
+        <h3>버전</h3>
+        <div class="row-add" style="align-items:center"><span class="help" id="updState" style="flex:1;margin:0">새 버전 확인 중…</span><button class="ghost" type="button" id="btnUpdate">새 버전 확인</button></div>
+        <p class="help">켤 때와 12시간마다 GitHub 릴리스의 최신 번호만 확인합니다 (보내는 정보 없음). 윈도우 zip판은 ‘지금 업데이트’로 앱이 받아 바꿔 끼웁니다. 봇·팀·대화 기록·설정은 그대로입니다.
+          <a href="#" id="lnkReleases">릴리스 페이지</a></p>
+        <h3>정보</h3>
+        <div class="kv" id="aboutKv"></div>
+        <h3>문제가 생겼을 때</h3>
+        <div class="rt-bar"><button class="ghost" type="button" id="btnDiag">진단 정보 복사</button><button class="ghost" type="button" id="btnLogs">문제 기록 폴더 열기</button></div>
+      </section>
+    </div>
+  </div>
+  <div class="dlg-foot"><span class="grow"></span><button class="primary" value="close">닫기</button></div>
+</form></dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (url, body) => window.mcb.call(url, body);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+window.addEventListener("error", (e) => { api("/api/log-error", { message: `${e.message} @ ${e.filename}:${e.lineno}` }).catch(() => {}); });
+window.addEventListener("unhandledrejection", (e) => { api("/api/log-error", { message: String(e.reason && e.reason.stack || e.reason) }).catch(() => {}); });
+
+let toastTimer = null;
+function toast(msg, action) {
+  document.querySelectorAll(".toast").forEach((t) => t.remove());
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.textContent = msg;
+  if (action) { const b = document.createElement("button"); b.type = "button"; b.textContent = "폴더 열기"; b.onclick = action; t.appendChild(b); }
+  document.body.appendChild(t);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.remove(), action ? 6000 : 3500);
+}
+
+function md(text) {
+  // 간단한 마크다운: 제목, 목록, 표, 굵게, 코드, 링크([이름](doc:ID)는 내 문서 검색에서 열기)
+  // 원문에서 코드·링크를 먼저 잘라 내고 조각마다 따로 이스케이프한다 — 이스케이프한 HTML 위에 규칙을 겹쳐 쓰면
+  // 앞 규칙이 만든 따옴표가 뒤 규칙의 속성 안으로 들어가 속성을 깨뜨릴 수 있다 (문서·AI 답에 숨긴 스크립트)
+  const TOK = /`([^`]+)`|\[([^\]]+)\]\(doc:(\d+)(?:#c(\d+))?\)|\[([^\]]+)\]\((https?:[^)\s]+)\)/g;
+  const inline = (t) => {
+    let out = "", last = 0, m;
+    for (TOK.lastIndex = 0; (m = TOK.exec(t)); last = TOK.lastIndex) {
+      out += esc(t.slice(last, m.index));
+      if (m[1] !== undefined) out += `<code>${esc(m[1])}</code>`;
+      else if (m[3] !== undefined) out += `<a class="doc" href="#" data-doc="${m[3]}"${m[4] ? ` data-chunk="${m[4]}"` : ""} title="내 문서 검색에서 열기">${esc(m[2])}</a>`;
+      else out += `<a href="${esc(m[6])}" target="_blank" rel="noopener">${esc(m[5])}</a>`;
+    }
+    // 굵게는 맨 끝에: <b>에는 따옴표가 없어 속성 안에 들어가도 속성을 깨지 못한다
+    return (out + esc(t.slice(last))).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  };
+  const lines = String(text || "").split("\n"), out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^```/.test(l)) {
+      const buf = [];
+      while (++i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i]);
+      out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);
+    } else if (/^\s*\|.*\|\s*$/.test(l)) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
+      i--;
+      const cells = (r) => r.trim().slice(1, -1).split("|").map((c) => c.trim());
+      const body = rows.filter((r) => !/^\s*\|[\s:|-]+\|\s*$/.test(r));
+      out.push("<table>" + body.map((r, n) => "<tr>" + cells(r).map((c) => n ? `<td>${inline(c)}</td>` : `<th>${inline(c)}</th>`).join("") + "</tr>").join("") + "</table>");
+    } else if (/^>\s?/.test(l)) {
+      out.push(`<blockquote>${inline(l.replace(/^>\s?/, ""))}</blockquote>`);
+    } else if (/^#{1,4}\s/.test(l)) {
+      out.push(`<h3>${inline(l.replace(/^#+\s*/, ""))}</h3>`);
+    } else if (/^\s*([-*]|\d+\.)\s+/.test(l)) {
+      const ordered = /^\s*\d+\./.test(l), items = [];
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, ""));
+      i--;
+      out.push(`<${ordered ? "ol" : "ul"}>` + items.map((x) => `<li>${inline(x)}</li>`).join("") + `</${ordered ? "ol" : "ul"}>`);
+    } else if (l.trim()) {
+      out.push(`<p style="margin:6px 0">${inline(l)}</p>`);
+    }
+  }
+  return out.join("");
+}
+
+// ---------- 설정 ----------
+function setSection(sec) {
+  $("setNav").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.sec === sec));
+  document.querySelectorAll(".set-body section").forEach((s) => s.classList.toggle("on", s.dataset.sec === sec));
+  if (sec === "ai") loadAi();
+  if (sec === "docs") renderDocsInfo();
+  if (sec === "about") renderAbout();
+}
+function openSettings(sec = "ai") { $("setDlg").showModal(); setSection(sec); }
+$("setNav").querySelectorAll("button").forEach((b) => b.onclick = () => setSection(b.dataset.sec));
+$("btnSettings").onclick = () => openSettings("ai");
+$("docsChip").onclick = () => openSettings("docs");
+
+async function renderDocsInfo() {
+  const d = await api("/api/docs/status");
+  bt.docs = d; renderDocsChip();
+  $("docsInfo").innerHTML = `<div class="ai-row"><div><b>내 문서 검색</b> · ${d.running ? `<span class="ok">설치됨 · 켜져 있음</span>` : d.installed ? `<span class="wait">설치됨 · 꺼져 있음</span>` : `<span class="no">찾지 못함</span>`}
+    <small>${d.installed ? `실행 파일: ${esc(d.where)}` : "내 문서 검색(MyDocSearch)을 설치하고 한 번 켜면 여기에 나타납니다. (내 문서 검색 0.3.15 이상)"}</small>
+    <small>데이터 폴더: ${esc(d.dataDir)}</small></div></div>`;
+}
+$("btnDocsRefresh").onclick = renderDocsInfo;
+
+async function renderAbout() {
+  const a = await api("/api/about");
+  $("aboutKv").innerHTML = [["버전", `${a.version} (데이터 형식 ${a.schema})`], ["Electron", a.electron], ["운영체제", a.os], ["데이터 폴더", a.data_dir],
+    ["저장 폴더", a.save_dir], ["문제 기록", `${a.errors}건`]].map(([k, v]) => `<span>${esc(k)}</span><span>${esc(v)}</span>`).join("");
+  renderUpdate();
+}
+$("btnDiag").onclick = async () => { const { text } = await api("/api/diag"); await navigator.clipboard.writeText(text); toast("진단 정보를 복사했습니다 (대화 내용은 들어 있지 않습니다)."); };
+$("btnLogs").onclick = () => api("/api/open-logs");
+$("lnkReleases").onclick = (e) => { e.preventDefault(); api("/api/open-releases", {}); };
+
+// ---------- AI 연결 ----------
+const AI_ROWS = [
+  ["claude", "Claude", "Claude 구독(Pro·Max)으로 일합니다 (Claude Code)."],
+  ["codex", "ChatGPT", "ChatGPT 구독(Plus·Pro·Business 등)으로 일합니다 (Codex)."],
+  ["gemini", "Gemini", "개인 Google 계정으로 일합니다 (Google Antigravity) — 무료 계정도 되고, Google AI Pro·Ultra면 사용량이 더 많습니다."],
+];
+const PNAME = { claude: "Claude", codex: "ChatGPT", gemini: "Gemini" };
+const SHARED = { claude: "Claude Code", codex: "Codex(ChatGPT)", gemini: "Google(Antigravity)" };
+let aiStatus = null;
+const signin = {};                      // target → { text, url, needCode }
+async function loadAi() {
+  aiStatus = await api("/api/ai/status");
+  renderAiRows();
+}
+window.mcb.onSignIn(async (ev) => {
+  if (ev.done || ev.error) {
+    delete signin[ev.target];
+    await loadAi();
+    if (ev.error && !/취소/.test(ev.error)) alert(`${PNAME[ev.target]} 로그인 실패\n\n${ev.error}`);
+    return;
+  }
+  signin[ev.target] = { ...(signin[ev.target] || {}), ...ev };
+  renderAiRows();
+});
+function renderAiRows() {
+  if (!aiStatus) return;
+  $("aiRows").innerHTML = AI_ROWS.map(([k, name, desc]) => {
+    const st = aiStatus[k], job = signin[k];
+    const ready = st.installed && st.loggedIn, off = !!(aiStatus.off || {})[k];
+    let state = off && ready ? `<span class="no">연결 끊김 · 이 앱에서 쓰지 않음</span>` : ready ? `<span class="ok">연결됨</span>` : `<span class="no">로그인 필요</span>`;
+    let extra = "";
+    if (off && ready && !job) extra += `<small>${SHARED[k]} 로그인은 그대로 두었습니다.${k !== "gemini" ? ` 이 PC에서 완전히 로그아웃하려면 <a href="#" data-logout="${k}">여기</a>를 누르세요.` : ""}</small>`;
+    if (k === "gemini" && !ready && !job) extra += `<small>누르면 브라우저에 Google 로그인 화면이 뜹니다. 처음 한 번은 Google의 Antigravity 프로그램을 받습니다(약 200MB).</small>`;
+    if (k === "gemini" && ready && !off) extra += `<small>개인 계정이면 Google 약관에 따라 질문·답(찾아 넣은 문서 내용 포함)이 서비스 개선에 쓰일 수 있습니다. 회사 문서라면 회사 보안 기준을 먼저 확인하세요.</small>`;
+    if (job) {
+      state = `<span class="wait">${esc(job.text || "준비 중…")}</span>`;
+      if (job.url) extra += `<small>브라우저가 열리지 않으면 <a href="${esc(job.url)}" target="_blank" rel="noopener">여기를 눌러 로그인 화면 열기</a></small>`;
+      if (job.needCode) extra += `<div class="row-add" style="margin-top:6px"><input class="field" id="code-${k}" placeholder="브라우저에 나온 코드를 붙여 넣으세요"><button class="ghost" type="button" data-code="${k}">확인</button></div>`;
+    }
+    let btn;
+    if (job) btn = `<button class="ghost" type="button" data-cancel="${k}">취소</button>`;
+    else if (off && ready) btn = `<button class="primary" type="button" data-reconnect="${k}">다시 연결</button>`;
+    else if (ready) btn = `<button class="ghost" type="button" data-disconnect="${k}">연결 끊기</button>`;
+    else btn = `<button class="primary" type="button" data-signin="${k}">${k === "gemini" ? "Google" : name}로 로그인</button>`;
+    if (!job) btn += `<button class="ghost" type="button" data-reset="${k}">설정 초기화</button>`;
+    return `<div class="ai-row"><div><b>${name}</b> · ${state}<small>${desc}</small>${extra}</div><div class="btns">${btn}</div></div>`;
+  }).join("");
+  const on = (sel, fn) => $("aiRows").querySelectorAll(sel).forEach((b) => b.onclick = (e) => { e.preventDefault(); fn(b); });
+  on("[data-signin]", async (b) => {
+    const k = b.dataset.signin;
+    signin[k] = { text: "준비 중…" }; renderAiRows();
+    const r = await api("/api/ai/signin", { target: k });
+    if (!r.ok) { delete signin[k]; renderAiRows(); alert(r.message); }
+  });
+  on("[data-disconnect]", async (b) => {
+    const k = b.dataset.disconnect;
+    if (!confirm(`${PNAME[k]} 연결을 끊을까요?\n\n이 AI를 쓰는 봇은 일하지 않습니다. ${SHARED[k]} 로그인은 이 PC의 다른 프로그램도 함께 쓰므로 그대로 둡니다.`)) return;
+    await api("/api/ai/disconnect", { target: k }); loadAi();
+  });
+  on("[data-reconnect]", async (b) => { await api("/api/ai/reconnect", { target: b.dataset.reconnect }); loadAi(); });
+  on("[data-reset]", async (b) => {
+    const k = b.dataset.reset;
+    if (!confirm(`${PNAME[k]} 설정을 초기화할까요?\n\n진행 중인 로그인을 멈추고, 이 앱이 받아 둔 프로그램을 지우고, 연결 끊기 설정을 처음으로 되돌립니다. ${SHARED[k]} 로그인은 그대로 둡니다.`)) return;
+    b.disabled = true;
+    const r = await api("/api/ai/reset", { target: k });
+    delete signin[k];
+    if (!r.ok) alert(r.message || "초기화하지 못했습니다."); else toast(`${PNAME[k]} 설정을 초기화했습니다.`);
+    loadAi();
+  });
+  on("[data-logout]", async (a) => {
+    const t = a.dataset.logout;
+    if (!confirm(`이 PC에서 ${PNAME[t]}에서 완전히 로그아웃할까요?\n\n같은 로그인을 쓰는 ${t === "claude" ? "Claude Code, Claude 데스크톱 앱" : "Codex, ChatGPT 데스크톱 앱"} 등도 함께 로그아웃됩니다.`)) return;
+    const r = await api("/api/ai/signout", { target: t });
+    if (!r.ok) alert(r.message || "로그아웃하지 못했습니다.");
+    loadAi();
+  });
+  on("[data-cancel]", (b) => api("/api/ai/signin-cancel", { target: b.dataset.cancel }));
+  on("[data-code]", async (b) => {
+    const k = b.dataset.code, code = $(`code-${k}`).value.trim();
+    if (!code) return;
+    signin[k] = { ...signin[k], needCode: false, text: "확인 중…" }; renderAiRows();
+    const r = await api("/api/ai/signin-code", { target: k, code });
+    if (!r.ok) alert(r.message);
+  });
+}
+
+// ---------- 새 버전 알림 · 자동 업데이트 ----------
+// 앱을 켤 때와 하루 두 번 GitHub의 최신 릴리스 번호를 확인해 위에 띄운다. ‘나중에’는 그 버전만 다시 띄우지 않는다
+const SKIP_KEY = "mcb-update-skip";
+let lastUpd = null, updJob = null;                     // updJob: 자동 업데이트 진행 상태 { text, ready }
+function updText(u) {
+  if (!u) return "새 버전 확인 중…";
+  if (u.error) return `새 버전을 확인하지 못했습니다 (${u.error}). 지금 버전 ${u.current}`;
+  return u.newer ? `새 버전 ${u.latest}이 나왔습니다 (지금 ${u.current}).` : `최신 버전입니다 (${u.current}).`;
+}
+function renderUpdate(u) {
+  lastUpd = u || lastUpd; u = lastUpd;
+  if (u) $("verLabel").textContent = "v" + u.current;
+  const st = $("updState");
+  if (st) st.innerHTML = esc(updText(u)) + (u && u.newer ? ` <a href="#" id="updGet2">받기</a>` : "");
+  if ($("updGet2")) $("updGet2").onclick = (e) => { e.preventDefault(); api("/api/open-releases", { url: u.url }); };
+  let skip = ""; try { skip = localStorage.getItem(SKIP_KEY) || ""; } catch { /* 저장 안 됨 */ }
+  const bar = $("updBar");
+  bar.hidden = !(u && u.newer && (u.latest !== skip || updJob));
+  if (bar.hidden) return;
+  const btn = (id, cls, t) => `<button class="${cls}" style="height:28px" type="button" id="${id}">${t}</button>`;
+  if (updJob) {
+    bar.innerHTML = `<span>⬇️ ${esc(updJob.text || "준비 중…")}${updJob.ready ? "<small>앱을 다시 시작하면 몇 초 안에 새 버전으로 열립니다.</small>" : ""}</span>` +
+      (updJob.ready ? btn("updApply", "primary", "다시 시작해 업데이트") : "");
+  } else {
+    bar.innerHTML = `<span>🎉 <b>새 버전 ${esc(u.latest)}</b>이 나왔습니다 (지금 ${esc(u.current)}).<small>${u.canUpdate ? "‘지금 업데이트’를 누르면 앱이 받아서 바꿔 끼웁니다." : "새 설치 파일을 받아 설치하면"} 봇·팀·대화 기록은 그대로 이어서 씁니다.</small></span>` +
+      (u.canUpdate ? btn("updNow", "primary", "지금 업데이트") + btn("updGet", "ghost", "받기") : btn("updGet", "primary", "받기")) + btn("updLater", "ghost", "나중에");
+  }
+  const on = (id, fn) => { const b = $(id); if (b) b.onclick = fn; };
+  on("updGet", () => api("/api/open-releases", { url: u.url }));
+  on("updLater", () => { try { localStorage.setItem(SKIP_KEY, u.latest); } catch { /* 저장 안 됨 */ } bar.hidden = true; });
+  on("updNow", async () => {
+    updJob = { text: "준비 중…" }; renderUpdate();
+    const r = await api("/api/update/prepare", { version: u.latest });
+    if (!r.ok) { updJob = null; renderUpdate(); alert(`업데이트하지 못했습니다\n\n${r.message}`); return; }
+    updJob = { text: `새 버전 ${u.latest} 준비 완료`, ready: true }; renderUpdate();
+    if (confirm(`새 버전 ${u.latest} 준비가 끝났습니다.\n\n앱을 다시 시작해 업데이트를 마칠까요? (몇 초 걸립니다)`)) $("updApply").click();
+  });
+  on("updApply", async () => {
+    $("updApply").disabled = true;
+    const r = await api("/api/update/apply", {});
+    if (!r.ok) alert(r.message || "업데이트를 시작하지 못했습니다.");
+  });
+}
+window.mcb.onUpdate((ev) => { if (updJob && !updJob.ready) { updJob.text = ev.text; renderUpdate(); } });
+async function checkUpdate(force) {
+  const u = await api("/api/update", { force });
+  if (u.justUpdated) toast(`새 버전 ${u.justUpdated}로 업데이트했습니다.`);
+  renderUpdate(u); return u;
+}
+$("btnUpdate").onclick = async () => {
+  $("updState").textContent = "확인 중…";
+  const u = await checkUpdate(true);
+  if (u.newer) { try { localStorage.removeItem(SKIP_KEY); } catch { /* 저장 안 됨 */ } renderUpdate(u); }
+};
+setTimeout(() => checkUpdate(false), 3000);
+setInterval(() => checkUpdate(false), 12 * 3600 * 1000);
+</script>
+<script src="bots.js"></script>
+<script>
+renderBots(true);
+setInterval(async () => { const d = await api("/api/docs/status"); if (d.installed !== bt.docs.installed || d.running !== bt.docs.running) { bt.docs = d; renderDocsChip(); } }, 15000);
+</script>
+</body>
+</html>
