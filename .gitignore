@@ -1,5 +1,5 @@
 # 의존성·빌드 결과
-node_modules/
+node_modules
 dist/
 package-lock.json
 
