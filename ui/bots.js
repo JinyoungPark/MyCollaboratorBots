@@ -20,7 +20,12 @@ const SAMPLE = [
   { emoji: "📝", name: "정리", role: "찾은 내용을 보고서 형식(요약 · 본문 · 할 일)으로 짧고 분명하게 씁니다.", perm: "off" },
   { emoji: "🧐", name: "검토", role: "문서끼리 다른 숫자·날짜·조건, 근거 없는 주장, 빠진 내용을 찾아 짚습니다.", perm: "off" },
 ];
-const STEP = { plan: "계획", task: "맡은 일", sum: "최종 답" };
+const STEP = { plan: "계획", task: "맡은 일", review: "검토", sum: "최종 결과" };
+const STATE_IC = { working: "⏳", "": "✅", error: "⚠️", stopped: "⏹" };
+// 메시지를 쓴 봇 (팀장이 이번 일에만 만든 임시 팀원은 data.temp)
+const whoOf = (m) => m.data.temp || botOf(m.bot_id) || { emoji: "🤖", name: "봇" };
+const stepLabel = (m) => m.data.step === "task" ? `${m.data.round > 1 ? m.data.round + "차 " : ""}맡은 일` : m.data.step === "review" ? `${m.data.round}차 결과 검토` : STEP[m.data.step] || "";
+const dur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}초` : `${Math.floor(s / 60)}분 ${s % 60}초`; };
 const ACT_STATE = { pending: ["❓", "허용을 기다림"], running: ["⏳", "하는 중"], done: ["✅", "했습니다"], failed: ["⚠️", "실패"], denied: ["🚫", "거절함"], blocked: ["🔒", "권한 없음 (보기만)"] };
 
 async function renderBots(keepRoom) {
@@ -31,7 +36,8 @@ async function renderBots(keepRoom) {
   renderDocsChip();
   if (!bt.bots.length) {
     box.innerHTML = `<div class="bot-empty"><h2>🤖 MyCollaboratorBots</h2>
-      <p>여러 AI 봇을 한 팀으로 굴립니다. 팀에 말하면 <b>팀장 봇</b>이 일을 나눠 팀원에게 맡기고, 결과를 모아 답합니다.
+      <p>일을 던지면 <b>팀장 봇</b>이 알아서 나눠 맡기고(필요하면 임시 팀원도 만들어), 결과를 검토해 부족하면 다시 맡긴 뒤 최종 결과를 냅니다.
+      나는 오른쪽 <b>진행 상황</b>에서 지켜보다가, 결과를 <b>승인</b>하거나 <b>수정 요청</b>만 하면 됩니다.
       봇은 내 문서를 찾고 읽어 근거와 함께 답하고, 허용한 봇만 문서 저장·모음 담기 같은 앱 작업을 합니다.</p>
       <div class="bot-sample">${SAMPLE.map((b) => `<span>${b.emoji} <b>${esc(b.name)}</b> ${esc(b.role)}</span>`).join("")}</div>
       <div class="rt-bar"><button class="primary" id="botSample">예시 팀 만들기 (팀장·조사·정리·검토)</button><button class="ghost" id="botNew0">봇 직접 만들기</button></div>
@@ -74,9 +80,11 @@ async function renderRoom() {
   chat.innerHTML = `<div class="bot-chat-h"><div class="grow"><b>${esc(r.name)}</b>
       <small>팀장 ${lead ? `${esc(lead.emoji)} ${esc(lead.name)}` : "-"} · 팀원 ${r.members.map(botOf).filter(Boolean).map((b) => `${esc(b.emoji)} ${esc(b.name)}`).join(", ") || "없음"}${r.sched_prompt && r.schedule.every !== "manual" ? ` · ⏰ ${esc(r.when)}${r.next_run ? ` (다음 ${when(r.next_run)})` : ""}` : ""}</small></div>
       <button class="ghost" id="roomEdit">팀 설정</button><button class="ghost" id="roomClear" title="대화 기록 지우기">비우기</button></div>
-    <div class="bot-msgs" id="botMsgs">${messages.map(msgHtml).join("") || `<p class="help bot-hint">예: “이번 달 들어온 견적서를 비교해서 표로 정리하고, 문서로 저장해 줘”</p>`}</div>
-    <div class="bot-compose"><textarea id="botInput" rows="2" placeholder="팀에게 맡길 일 (Enter 보내기 · Shift+Enter 줄바꿈)"></textarea>
-      ${room && room.busy ? `<button class="ghost" id="botStop">멈추기</button>` : `<button class="primary" id="botSend">보내기</button>`}</div>`;
+    <div class="bot-body"><div class="bot-conv">
+    <div class="bot-msgs" id="botMsgs">${messages.map(msgHtml).join("") || `<p class="help bot-hint">일을 던지면 팀장이 알아서 나눠 맡기고 진행합니다.<br>예: “이번 달 들어온 견적서를 비교해서 표로 정리하고, 문서로 저장해 줘”</p>`}</div>
+    <div class="bot-compose"><textarea id="botInput" rows="2" placeholder="팀에게 맡길 일 (Enter 보내기 · Shift+Enter 줄바꿈)${room && room.busy ? " — 일하는 중에 보내면 끝난 뒤 이어서 합니다" : ""}"></textarea>
+      <button class="primary" id="botSend">보내기</button></div></div>
+    <aside class="bot-mon" id="botMon">${monitorHtml(messages, room)}</aside></div>`;
   $("botInput").value = draft;
   const list = $("botMsgs");
   if (scrolled !== false) list.scrollTop = list.scrollHeight;
@@ -90,10 +98,25 @@ async function renderRoom() {
     $("botInput").value = "";
     renderBots(true);
   };
-  if ($("botSend")) $("botSend").onclick = send;
-  if ($("botStop")) $("botStop").onclick = () => api("/api/bots/stop", { id: r.id });
+  $("botSend").onclick = send;
+  if ($("botStop")) $("botStop").onclick = () => { if (confirm("지금 하는 일을 멈출까요? (기다리는 일도 함께 취소)")) api("/api/bots/stop", { id: r.id }); };
+  // 결과 판단: 승인 · 수정 요청
+  chat.querySelectorAll("[data-approve]").forEach((b) => b.onclick = async () => {
+    const x = await api("/api/bots/decide", { msg: +b.dataset.approve, verdict: "approve" });
+    if (!x.ok) alert(x.message); else toast("승인했습니다.");
+  });
+  chat.querySelectorAll("[data-revise]").forEach((b) => b.onclick = async () => {
+    const note = prompt("무엇을 고칠까요? 팀장이 이 의견대로 다시 진행합니다.");
+    if (!note || !note.trim()) return;
+    const x = await api("/api/bots/decide", { msg: +b.dataset.revise, verdict: "revise", note });
+    if (!x.ok) alert(x.message); else renderBots(true);
+  });
+  chat.querySelectorAll("[data-goto]").forEach((el) => el.onclick = () => {
+    const t = list.querySelector(`[data-mid="${el.dataset.goto}"]`);
+    if (t) { t.scrollIntoView({ behavior: "smooth", block: "center" }); t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1200); }
+  });
   $("botInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } };
-  list.querySelectorAll("[data-allow]").forEach((b) => b.onclick = async () => {
+  chat.querySelectorAll("[data-allow]").forEach((b) => b.onclick = async () => {
     b.disabled = true;
     const x = await api("/api/bots/act", { msg: +b.dataset.allow, allow: b.dataset.v === "1" });
     if (x && x.ok === false && x.message) alert(x.message);
@@ -110,22 +133,63 @@ async function renderRoom() {
 function msgHtml(m) {
   if (m.who === "user") return `<div class="bmsg me"><div class="bub">${esc(m.text).replace(/\n/g, "<br>")}</div></div>`;
   if (m.who === "system") return `<div class="bmsg sys"><div class="bub">${m.data.trigger === "일정" ? "⏰ 예약 작업: " : ""}${esc(m.text)}</div></div>`;
-  const b = botOf(m.bot_id) || { emoji: "🤖", name: "봇" };
+  const b = whoOf(m);
   if (m.kind === "action") {
     const [ic, st] = ACT_STATE[m.status] || ["", m.status];
-    return `<div class="bmsg act ${m.status}"><div class="bub"><div class="who">${esc(b.emoji)} ${esc(b.name)} · 앱 작업</div>
+    return `<div class="bmsg act ${m.status}" data-mid="${m.id}"><div class="bub"><div class="who">${esc(b.emoji)} ${esc(b.name)} · 앱 작업</div>
       <div>${ic} ${esc(m.text)} <span class="rt-chip">${st}</span></div>
       ${m.status === "pending" ? `<div class="btns"><button class="primary" data-allow="${m.id}" data-v="1">허용</button><button class="ghost" data-allow="${m.id}" data-v="">거절</button></div>` : ""}
       ${m.data.result ? `<small>${esc(String(m.data.result).slice(0, 400))}</small>` : ""}</div></div>`;
   }
   const working = m.status === "working";
   const meta = [m.data.model, m.data.tools ? `도구 ${m.data.tools}번` : "", m.data.seconds ? `${Math.round(m.data.seconds)}초` : ""].filter(Boolean).join(" · ");
-  return `<div class="bmsg bot ${m.data.step || ""} ${m.status}"><div class="bub">
-    <div class="who">${esc(b.emoji)} ${esc(b.name)}${m.data.step ? ` · ${STEP[m.data.step]}` : ""}${working ? ` <span class="rt-chip run">${m.data.tools ? `문서 찾는 중 (${m.data.tools})` : "생각하는 중"}</span>` : ""}</div>
+  return `<div class="bmsg bot ${m.data.step || ""} ${m.status}${m.data.final ? " final" : ""}" data-mid="${m.id}"><div class="bub">
+    <div class="who">${esc(b.emoji)} ${esc(b.name)}${m.data.temp ? ` <span class="rt-chip" title="${esc(m.data.temp.role)}">임시 팀원</span>` : ""}${m.data.step ? ` · ${stepLabel(m)}` : ""}${working ? ` <span class="rt-chip run">${m.data.tools ? `문서 찾는 중 (${m.data.tools})` : "생각하는 중"}</span>` : ""}</div>
     ${m.data.task ? `<div class="task">📌 ${esc(m.data.from || "")}: ${esc(m.data.task)}</div>` : ""}
     <div class="md">${m.text ? md(m.text) : working ? "…" : ""}</div>
-    ${!working && m.text && m.status !== "error" && m.status !== "stopped" ? `<div class="foot"><small>${esc(meta)}</small><button class="link" data-save="${m.id}">문서로 저장</button></div>` : ""}</div></div>`;
+    ${!working && m.text && m.status !== "error" && m.status !== "stopped" ? `<div class="foot"><small>${esc(meta)}</small><button class="link" data-save="${m.id}">문서로 저장</button></div>` : ""}
+    ${m.data.final && m.status === "" ? reviewBar(m) : ""}</div></div>`;
 }
+// 최종 결과의 판단 줄
+function reviewBar(m) {
+  if (m.data.review === "approved") return `<div class="review done">✅ 승인함 <small>${when(m.data.decided / 1000)}</small></div>`;
+  if (m.data.review === "revise") return `<div class="review done">✍️ 수정 요청함: ${esc(m.data.note || "")}</div>`;
+  return `<div class="review"><span>판단해 주세요</span><button class="primary" data-approve="${m.id}">✅ 승인</button><button class="ghost" data-revise="${m.id}">✍️ 수정 요청</button></div>`;
+}
+
+// ---------- 진행 상황 (오른쪽): 가장 최근 일의 단계 · 작업마다 상태 · 시간 · 지금 보는 것 ----------
+function monitorHtml(messages, room) {
+  const jobId = Math.max(0, ...messages.filter((m) => m.data.job).map((m) => m.data.job));
+  const busy = !!(room && room.busy);
+  if (!jobId) return `<div class="mon-h"><b>진행 상황</b></div><p class="help">일을 던지면 팀장이 나눈 작업과 진행 과정이 여기에 보입니다.</p>`;
+  const ask = messages.find((m) => m.id === jobId);
+  const steps = messages.filter((m) => m.data.job === jobId && m.kind === "msg");
+  const acts = messages.filter((m) => m.data.job === jobId && m.kind === "action");
+  const fin = steps.find((m) => m.data.final);
+  const working = steps.some((m) => m.status === "working");
+  const state = working ? ["run", "진행 중"] : fin && fin.data.review === "wait" ? ["wait", "판단 기다림"] : fin && fin.data.review === "approved" ? ["ok", "승인함"]
+    : fin && fin.data.review === "revise" ? ["ok", "수정 요청함"] : steps.some((m) => m.status === "stopped") ? ["stop", "멈춤"] : steps.some((m) => m.status === "error") ? ["err", "문제 있음"] : ["ok", "끝"];
+  const t0 = ask ? ask.ts * 1000 : (steps[0] || {}).data?.started || Date.now();
+  const tEnd = working ? null : Math.max(...steps.map((m) => m.data.ended || 0)) || null;
+  const pending = acts.filter((a) => a.status === "pending").length;
+  const item = (m) => {
+    const b = whoOf(m), w = m.status === "working";
+    const time = m.data.started ? (w ? `<span data-since="${m.data.started}">${dur(Date.now() - m.data.started)}</span>` : m.data.ended ? dur(m.data.ended - m.data.started) : "") : "";
+    return `<div class="mon-it ${w ? "run" : m.status || "ok"} ${m.data.step === "task" ? "task" : "lead"}" data-goto="${m.id}" title="대화에서 보기">
+      <div class="mon-top"><span>${STATE_IC[m.status] ?? "✅"}</span><b>${esc(b.emoji)} ${esc(b.name)}</b><span class="mon-step">${esc(stepLabel(m))}</span><span class="grow"></span><small>${time}</small></div>
+      ${m.data.task ? `<div class="mon-task">${esc(m.data.task)}</div>` : ""}
+      ${w ? `<div class="mon-now">${m.data.lastTool ? `🔎 ${esc(m.data.lastTool)}` : "생각하는 중…"}${m.data.tools ? ` · 도구 ${m.data.tools}번` : ""}</div>`
+        : m.data.assigned ? `<div class="mon-now">→ ${m.data.assigned}개 작업을 맡김</div>` : m.data.tools ? `<div class="mon-now">도구 ${m.data.tools}번${m.data.model ? ` · ${esc(m.data.model)}` : ""}</div>` : ""}</div>`;
+  };
+  return `<div class="mon-h"><b>진행 상황</b><span class="mon-state ${state[0]}">${state[1]}</span></div>
+    <div class="mon-ask">${esc((ask ? ask.text : "").slice(0, 160))}</div>
+    <div class="mon-meta">⏱ ${tEnd ? dur(tEnd - t0) : `<span data-since="${t0}">${dur(Date.now() - t0)}</span>`} · 작업 ${steps.filter((m) => m.data.step === "task").length}개${pending ? ` · <b class="warn">허용 기다림 ${pending}건</b>` : ""}</div>
+    <div class="mon-list">${steps.map(item).join("")}</div>
+    ${busy ? `<button class="ghost mon-stop" id="botStop">⏹ 멈추기</button>` : ""}
+    ${fin && fin.data.review === "wait" ? `<div class="mon-judge"><button class="primary" data-approve="${fin.id}">✅ 승인</button><button class="ghost" data-revise="${fin.id}">✍️ 수정 요청</button></div>` : ""}`;
+}
+// 일하는 동안 걸린 시간을 1초마다
+setInterval(() => document.querySelectorAll("#botMon [data-since]").forEach((el) => { el.textContent = dur(Date.now() - +el.dataset.since); }), 1000);
 
 async function saveAsDoc(id) {
   const m = bt.msgs.find((x) => x.id === id);
@@ -206,7 +270,7 @@ function roomDialog(r) {
   dlg.innerHTML = `<form method="dialog"><div class="dlg-head">${isNew ? "새 팀" : "팀 설정"}</div><div class="dlg-body">
     <label class="fld">팀 이름<input id="rName" value="${esc(r.name || "")}" placeholder="예: 견적 분석 팀"></label>
     <label class="fld">팀장 (일을 나누고 결과를 모아 답함)<select id="rLead">${bt.bots.map((b) => `<option value="${b.id}" ${b.id === r.lead ? "selected" : ""}>${esc(b.emoji)} ${esc(b.name)}</option>`).join("")}</select></label>
-    <div class="fld">팀원<div class="bot-members" id="rMembers">${bt.bots.map((b) => `<label><input type="checkbox" data-m="${b.id}" ${r.members.includes(b.id) ? "checked" : ""}> ${esc(b.emoji)} ${esc(b.name)}</label>`).join("")}</div></div>
+    <div class="fld">팀원 <small>(없어도 됩니다 — 팀장이 필요하면 임시 팀원을 만들어 맡깁니다)</small><div class="bot-members" id="rMembers">${bt.bots.map((b) => `<label><input type="checkbox" data-m="${b.id}" ${r.members.includes(b.id) ? "checked" : ""}> ${esc(b.emoji)} ${esc(b.name)}</label>`).join("")}</div></div>
     <h4 class="rt-h2">예약 작업 (선택)</h4>
     <div class="fld-row">
       <label class="fld">언제<select id="rEvery">${[["manual", "없음"], ["hourly", "매시간"], ["daily", "매일"], ["weekly", "매주"]].map(([v, l]) => `<option value="${v}" ${s.every === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>

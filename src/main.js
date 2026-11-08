@@ -71,6 +71,8 @@ async function handle(url, body) {
       return bots.stop(body.id);
     case "/api/bots/clear":
       try { bots.clear(body.id); return { ok: true }; } catch (e) { return { ok: false, message: e.message }; }
+    case "/api/bots/decide":                         // 최종 결과 판단: 승인 · 수정 요청
+      return bots.decide(body.msg, body.verdict, body.note);
     case "/api/bots/act":
       return body.allow ? bots.act(body.msg) : bots.deny(body.msg);
     case "/api/export-docx": {                        // 봇의 답 → 워드(또는 마크다운) 파일

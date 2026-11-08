@@ -1,5 +1,7 @@
 // 봇 팀: 여러 AI 봇을 팀으로 굴리는 대화방. 봇마다 이름·역할 지시·AI(Claude·ChatGPT(Codex)·Gemini)·모델·앱 작업 권한을 정한다.
-//   팀(대화방)에 말하면 팀장 봇이 일을 나눠 팀원에게 맡기고(한 번에 최대 4개, 동시에), 결과를 모아 답한다.
+//   팀(대화방)에 일을 던지면 팀장 봇이 알아서 배분·진행한다: 팀원(필요하면 팀장이 만든 임시 팀원)에게 동시에 맡기고(한 번에 최대 4개),
+//   결과를 검토해 부족하면 다시 맡기기를 몇 차례(최대 3차) 되풀이한 뒤 최종 결과를 낸다. 사용자는 최종 결과를 승인하거나 수정을 요청한다.
+//   일의 단계·작업마다의 상태·시간·부른 도구는 메시지 data에 남아 화면의 '진행 상황'에서 지켜본다.
 //   내 문서 검색(MyDocSearch)이 설치돼 있으면 봇은 그 검색·읽기 도구만 쓴다 (ai.runTask, MDS_TOOLS=basic). 없으면 문서 도구 없이 답한다.
 //   앱을 바꾸는 일(문서 저장·모음 담기·루틴 실행·OneDrive 보내기)은 봇이 답 끝에 ```앱작업``` 블록으로 요청하고, 봇의 권한에 따라:
 //   off — 하지 않음, ask — 대화방에 허용/거절 카드, auto — 바로 한다. 실제로는 켜져 있는 MyDocSearch가 한다 (src/docsearch.js).
@@ -22,6 +24,7 @@ const ACTIONS = {
   share_file: "OneDrive로 보내기",
 };
 const MAX_TASKS = 4;
+const MAX_ROUNDS = 3;        // 팀원에게 맡기는 차수 (검토 뒤 다시 맡기기 포함)
 
 function init(c) {
   ctx = c;
@@ -87,7 +90,9 @@ function addMsg(roomId, m) {
 function setMsg(id, m) {
   const old = ctx.db.prepare("SELECT * FROM bot_msgs WHERE id=?").get(id);
   if (!old) return;
-  ctx.db.prepare("UPDATE bot_msgs SET text=?, data=?, status=? WHERE id=?").run(m.text ?? old.text, m.data ? JSON.stringify(m.data) : old.data, m.status ?? old.status, id);
+  // data는 합친다 (일하는 중에도 단계·맡은 일·시작 시각이 남아 진행 상황에 보이게)
+  const data = m.data ? JSON.stringify({ ...JSON.parse(old.data || "{}"), ...m.data }) : old.data;
+  ctx.db.prepare("UPDATE bot_msgs SET text=?, data=?, status=? WHERE id=?").run(m.text ?? old.text, data, m.status ?? old.status, id);
   changed(old.room_id);
 }
 const changed = (roomId) => { if (ctx.emit) ctx.emit({ type: "bot", room: roomId }); };
@@ -103,8 +108,8 @@ function send(roomId, text, trigger = "사용자") {
   if (!r) return { ok: false, message: "팀을 찾지 못했습니다." };
   text = String(text || "").trim();
   if (!text) return { ok: false, message: "할 말을 적으세요." };
-  addMsg(r.id, { who: trigger === "일정" ? "system" : "user", text, data: { trigger } });
-  queue.push({ room: r.id, text, trigger });
+  const msgId = addMsg(r.id, { who: trigger === "일정" ? "system" : "user", text, data: { trigger } });
+  queue.push({ room: r.id, text, trigger, msgId });
   pump();
   return { ok: true };
 }
@@ -126,10 +131,11 @@ async function pump() {
 
 // 최근 대화 (봇에게 넘길 맥락)
 function history(roomId, beforeId) {
-  const rows = ctx.db.prepare("SELECT who, bot_id, text FROM bot_msgs WHERE room_id=? AND id<? AND kind='msg' AND status<>'working' ORDER BY id DESC LIMIT 10")
+  const rows = ctx.db.prepare("SELECT who, bot_id, text, data FROM bot_msgs WHERE room_id=? AND id<? AND kind='msg' AND status<>'working' ORDER BY id DESC LIMIT 10")
     .all(roomId, beforeId).reverse();
   const names = Object.fromEntries(bots().map((b) => [b.id, b.name]));
-  return rows.map((m) => `${m.who === "user" ? "사용자" : m.who === "system" ? "예약 작업" : names[m.bot_id] || "봇"}: ${m.text.slice(0, 1500)}`).join("\n");
+  const who = (m) => m.who === "user" ? "사용자" : m.who === "system" ? "예약 작업" : names[m.bot_id] || (JSON.parse(m.data || "{}").temp || {}).name || "봇";
+  return rows.map((m) => `${who(m)}: ${m.text.slice(0, 1500)}`).join("\n");
 }
 
 const NO_DOCS_RULE = "내 문서 검색(MyDocSearch)이 이 PC에 없어 사용자의 문서는 찾을 수 없습니다. 알고 있는 지식으로 답하고, 문서가 필요하면 그렇다고 말하세요.";
@@ -164,71 +170,119 @@ function takeBlock(text, tag) {
   return { rest, items };
 }
 
+const AUTO_RULE = "사용자는 일을 던지고 최종 결과만 보고 판단합니다. 사용자에게 되묻지 말고, 모자란 정보는 합리적으로 가정한 뒤 그 가정을 밝히고 끝까지 진행하세요.";
+const TASK_FORMAT = "```팀작업\n[{\"봇\": \"팀원 이름\", \"일\": \"맡길 일 (그 팀원이 혼자 할 수 있게 구체적으로)\"}]\n```\n" +
+  "팀에 맞는 팀원이 없으면 임시 팀원을 만들어 맡길 수 있습니다: {\"봇\": \"새 이름\", \"역할\": \"그 팀원의 역할\", \"일\": \"맡길 일\"} (팀장과 같은 AI로 일함).";
+
+// 팀장이 이름으로 고른 팀원 (없는 이름에 역할을 주면 이번 일에만 쓰는 임시 팀원)
+function pickWorkers(items, team, lead) {
+  const byName = (n) => team.find((b) => b.name === n) || team.find((b) => n.includes(b.name));
+  const temps = {};
+  return items.map((t) => {
+    const n = String(t.봇 || t.bot || "").trim().slice(0, 30), task = String(t.일 || t.task || "").trim(), role = String(t.역할 || t.role || "").trim();
+    let b = n && byName(n);
+    if (!b && n && role && n !== lead.name) b = temps[n] ||= { id: null, temp: true, name: n, role: role.slice(0, 1000), emoji: "🧩", provider: lead.provider, model: lead.model, perm: "off" };
+    return { b, task };
+  }).filter((t) => t.b && t.task).slice(0, MAX_TASKS);
+}
+const botData = (b) => (b.temp ? { temp: { name: b.name, emoji: b.emoji, role: b.role } } : {});
+
 async function work(job) {
   const r = room(job.room);
   if (!r) return;
   const lead = bot(r.lead);
   if (!lead) throw new Error("팀장 봇이 없습니다. 팀 설정을 확인하세요.");
   const team = r.members.map(bot).filter(Boolean);
-  const userMsgId = ctx.db.prepare("SELECT MAX(id) AS id FROM bot_msgs WHERE room_id=?").get(r.id).id;
-  const past = history(r.id, userMsgId);
+  const jobId = job.msgId || ctx.db.prepare("SELECT MAX(id) AS id FROM bot_msgs WHERE room_id=?").get(r.id).id;
+  const past = history(r.id, jobId);
   const scheduled = job.trigger === "일정";
-  const roster = team.map((b) => `- ${b.name}: ${b.role || "(역할 없음)"}`).join("\n");
+  const asker = scheduled ? "예약 작업" : "사용자";
+  const roster = team.length ? "팀원:\n" + team.map((b) => `- ${b.name}: ${b.role || "(역할 없음)"}`).join("\n") : "정해 둔 팀원은 없습니다.";
+  const base = { job: jobId };
+  const leadMsg = (data) => addMsg(r.id, { who: "bot", bot_id: lead.id, text: "", status: "working", data: { ...base, ...data, started: Date.now() } });
+  const stopped = (id) => { setMsg(id, { status: "stopped", text: "멈췄습니다.", data: { ended: Date.now() } }); };
+  const failed = (id, res) => { setMsg(id, { status: "error", text: "⚠️ " + (res.error || "답을 받지 못했습니다."), data: { ended: Date.now() } }); };
 
   // 1) 팀장: 직접 답하거나 일을 나눈다
-  const planId = addMsg(r.id, { who: "bot", bot_id: lead.id, text: "", status: "working", data: { step: "plan" } });
-  const planSys = system(lead, team.length ? "당신은 이 팀의 팀장입니다. 팀원:\n" + roster + "\n\n" +
-    "팀원에게 맡기면 좋은 일이면 나눠 맡기세요. 그때는 짧게 계획을 말하고 답 끝에 다음 블록을 붙이세요 (팀원 이름은 위 목록 그대로, 최대 " + MAX_TASKS + "개):\n" +
-    "```팀작업\n[{\"봇\": \"팀원 이름\", \"일\": \"맡길 일 (그 팀원이 혼자 할 수 있게 구체적으로)\"}]\n```\n" +
-    "간단한 일이면 나누지 말고 바로 답하세요." : "팀원이 없으니 직접 답하세요.");
-  const planPrompt = `${past ? `지금까지의 대화:\n${past}\n\n` : ""}${scheduled ? "예약 작업" : "사용자"}의 요청: ${job.text}`;
-  const plan = await run(lead, planPrompt, planSys, progress(planId));
-  if (running.stopped) return setMsg(planId, { status: "stopped", text: "멈췄습니다." });
-  if (!plan.ok) return setMsg(planId, { status: "error", text: "⚠️ " + (plan.error || "답을 받지 못했습니다.") });
-  const { rest: planText, items: tasks } = takeBlock(plan.text, "팀작업");
-  const byName = (n) => team.find((b) => b.name === String(n || "").trim()) || team.find((b) => String(n || "").includes(b.name));
-  const assigned = tasks.map((t) => ({ b: byName(t.봇 || t.bot), task: String(t.일 || t.task || "").trim() })).filter((t) => t.b && t.task).slice(0, MAX_TASKS);
+  const planId = leadMsg({ step: "plan" });
+  const plan = await run(lead, `${past ? `지금까지의 대화:\n${past}\n\n` : ""}${asker}의 요청: ${job.text}`,
+    system(lead, `당신은 이 팀의 팀장입니다. ${roster}\n\n${AUTO_RULE}\n\n` +
+      `나눠 맡기면 좋은 일이면 짧게 계획을 말하고 답 끝에 다음 블록을 붙이세요 (최대 ${MAX_TASKS}개, 맡은 팀원들은 동시에 일합니다):\n${TASK_FORMAT}\n` +
+      "간단한 일이면 나누지 말고 바로 최종 결과를 답하세요."), progress(planId));
+  if (running.stopped) return stopped(planId);
+  if (!plan.ok) return failed(planId, plan);
+  let { rest: leadText, items } = takeBlock(plan.text, "팀작업");
+  let assigned = pickWorkers(items, team, lead);
+  if (!assigned.length) return final(planId, lead, plan, leadText, scheduled, r, { ...base, step: "plan" });
+  setMsg(planId, { status: "", text: leadText || "팀원에게 나눠 맡깁니다.", data: { model: plan.model, tools: plan.tools.length, ended: Date.now(), assigned: assigned.length } });
 
-  if (!assigned.length) {
-    await finish(planId, lead, plan, planText, scheduled);
-    return;
+  const done = [];                               // 지금까지의 결과 (차수마다 쌓임)
+  for (let round = 1; ; round++) {
+    // 2) 팀원들이 동시에
+    const results = await Promise.all(assigned.map(async ({ b, task }) => {
+      const id = addMsg(r.id, { who: "bot", bot_id: b.id, text: "", status: "working", data: { ...base, ...botData(b), step: "task", round, task, from: lead.name, started: Date.now() } });
+      const res = await run(b, `팀장 “${lead.name}”이 맡긴 일: ${task}\n\n(${asker}의 원래 요청: ${job.text})`, system(b, AUTO_RULE), progress(id));
+      if (running.stopped) { stopped(id); return null; }
+      if (!res.ok) { failed(id, res); return { b, task, round, text: `(실패: ${res.error || "답 없음"})` }; }
+      const text = await finish(id, b, res, null, scheduled, { ended: Date.now() });
+      return { b, task, round, text };
+    }));
+    if (running.stopped) return;
+    done.push(...results.filter(Boolean));
+
+    // 3) 팀장이 검토: 더 맡기거나 최종 결과
+    const last = round >= MAX_ROUNDS;
+    const sumId = leadMsg({ step: "review", round });
+    const report = done.map((x) => `## ${x.round}차 · ${x.b.name} — ${x.task}\n${x.text.slice(0, last ? 8000 : 10000)}`).join("\n\n");
+    const sum = await run(lead, `${asker}의 요청: ${job.text}\n\n팀원들의 결과:\n\n${report}\n\n` +
+      (last ? "이제 최종 결과를 쓰세요. 더 나눠 맡기지 마세요."
+        : `결과를 검토하세요. 빠졌거나 틀렸거나 서로 맞지 않는 부분을 채우려면 왜 필요한지 한두 줄로 말하고 다시 맡기세요 (남은 차수 ${MAX_ROUNDS - round}번):\n${TASK_FORMAT}\n` +
+          "충분하면 블록 없이 최종 결과를 쓰세요.") +
+      "\n최종 결과는 사용자가 바로 판단할 수 있게: 맨 앞에 한두 줄 결론, 그다음 근거와 내용, 끝에 확인이 필요한 점. 팀원이 밝힌 근거 링크는 그대로 살리세요.",
+      system(lead, `당신은 이 팀의 팀장입니다. ${roster}\n\n${AUTO_RULE}`), progress(sumId));
+    if (running.stopped) return stopped(sumId);
+    if (!sum.ok) return failed(sumId, sum);
+    ({ rest: leadText, items } = takeBlock(sum.text, "팀작업"));
+    assigned = last ? [] : pickWorkers(items, team, lead);
+    if (!assigned.length) return final(sumId, lead, sum, leadText, scheduled, r, { ...base, step: "sum", round });
+    setMsg(sumId, { status: "", text: leadText || "더 맡깁니다.", data: { model: sum.model, tools: sum.tools.length, ended: Date.now(), assigned: assigned.length } });
   }
-  setMsg(planId, { status: "", text: planText || "팀원에게 나눠 맡깁니다.", data: { step: "plan", model: plan.model, tools: plan.tools.length } });
-
-  // 2) 팀원들이 동시에
-  const results = await Promise.all(assigned.map(async ({ b, task }) => {
-    const id = addMsg(r.id, { who: "bot", bot_id: b.id, kind: "msg", text: "", status: "working", data: { step: "task", task, from: lead.name } });
-    const res = await run(b, `팀장 “${lead.name}”이 맡긴 일: ${task}\n\n(사용자의 원래 요청: ${job.text})`, system(b), progress(id));
-    if (running.stopped) { setMsg(id, { status: "stopped", text: "멈췄습니다." }); return null; }
-    if (!res.ok) { setMsg(id, { status: "error", text: "⚠️ " + (res.error || "답을 받지 못했습니다.") }); return { b, task, text: `(실패: ${res.error || "답 없음"})` }; }
-    const text = await finish(id, b, res, null, scheduled, { step: "task", task, from: lead.name });
-    return { b, task, text };
-  }));
-  if (running.stopped) return;
-
-  // 3) 팀장이 모아서 답
-  const sumId = addMsg(r.id, { who: "bot", bot_id: lead.id, text: "", status: "working", data: { step: "sum" } });
-  const report = results.filter(Boolean).map((x) => `## ${x.b.name} — ${x.task}\n${x.text.slice(0, 12000)}`).join("\n\n");
-  const sum = await run(lead, `${scheduled ? "예약 작업" : "사용자"}의 요청: ${job.text}\n\n팀원들의 결과:\n\n${report}\n\n` +
-    "팀원 결과를 바탕으로 사용자에게 줄 최종 답을 쓰세요. 팀원이 밝힌 근거 링크는 그대로 살리고, 서로 다른 내용은 짚어 주세요.",
-    system(lead, "당신은 이 팀의 팀장입니다. 이번에는 팀원 결과를 모아 최종 답을 씁니다 (더 나눠 맡기지 마세요)."), progress(sumId));
-  if (running.stopped) return setMsg(sumId, { status: "stopped", text: "멈췄습니다." });
-  if (!sum.ok) return setMsg(sumId, { status: "error", text: "⚠️ " + (sum.error || "답을 받지 못했습니다.") });
-  await finish(sumId, lead, sum, null, scheduled, { step: "sum" });
-  if (scheduled && ctx.notify) ctx.notify(`MyCollaboratorBots · ${r.name}`, "예약 작업을 마쳤습니다.");
 }
 
-// 진행 표시: 쓰는 중인 글과 부른 도구
+// 최종 결과: 사용자의 판단(승인 · 수정 요청)을 기다린다
+async function final(id, lead, res, text, scheduled, r, data) {
+  await finish(id, lead, res, text, scheduled, { ...data, step: "sum", final: true, review: "wait", ended: Date.now() });
+  if (ctx.notify) ctx.notify(`MyCollaboratorBots · ${r.name}`, scheduled ? "예약 작업을 마쳤습니다. 결과를 확인하세요." : "결과가 나왔습니다. 확인하고 판단해 주세요.");
+}
+
+// 사용자의 판단: approve — 승인으로 끝, revise — 의견을 붙여 팀장이 이어서 고침
+function decide(msgId, verdict, note) {
+  const m = ctx.db.prepare("SELECT * FROM bot_msgs WHERE id=? AND kind='msg'").get(Number(msgId));
+  const d = m ? JSON.parse(m.data || "{}") : {};
+  if (!m || !d.final) return { ok: false, message: "판단할 결과를 찾지 못했습니다." };
+  if (d.review !== "wait") return { ok: false, message: "이미 판단한 결과입니다." };
+  if (verdict === "approve") { setMsg(m.id, { data: { review: "approved", decided: Date.now() } }); return { ok: true }; }
+  if (verdict !== "revise") return { ok: false, message: "알 수 없는 판단" };
+  note = String(note || "").trim();
+  if (!note) return { ok: false, message: "무엇을 고칠지 적으세요." };
+  setMsg(m.id, { data: { review: "revise", note: note.slice(0, 2000), decided: Date.now() } });
+  return send(m.room_id, `수정 요청: ${note}\n\n(바로 앞의 최종 결과를 이 의견대로 고쳐 다시 내 주세요.)`);
+}
+
+// 진행 표시: 쓰는 중인 글, 부른 도구 수와 마지막 도구(무엇을 찾는지)
 function progress(id) {
-  let text = "", tools = 0, last = 0;
+  let text = "", tools = 0, lastTool = "", last = 0;
   return (ev) => {
     if (ev.type === "delta") text += ev.text;
     else if (ev.type === "reset") text = "";
-    else if (ev.type === "tool") tools++;
-    else return;
-    if (Date.now() - last < 400) return;
+    else if (ev.type === "tool") {
+      tools++;
+      const i = ev.input || {};
+      lastTool = `${ev.name}${i.query ? `: ${i.query}` : i.id ? ` #${i.id}` : ""}`.slice(0, 120);
+    } else return;
+    if (Date.now() - last < 400 && ev.type !== "tool") return;
     last = Date.now();
-    setMsg(id, { text: text.slice(-4000), data: { tools } });
+    setMsg(id, { text: text.slice(-4000), data: { tools, lastTool } });
   };
 }
 
@@ -236,11 +290,12 @@ function progress(id) {
 async function finish(id, b, res, text, scheduled, data = {}) {
   const { rest, items } = takeBlock(text ?? res.text, "앱작업");
   setMsg(id, { status: "", text: rest || "(빈 답)", data: { ...data, model: res.model, tools: res.tools.length, seconds: res.seconds } });
-  const roomId = ctx.db.prepare("SELECT room_id FROM bot_msgs WHERE id=?").get(id).room_id;
+  const row = ctx.db.prepare("SELECT room_id, data FROM bot_msgs WHERE id=?").get(id);
+  const roomId = row.room_id, job = JSON.parse(row.data || "{}").job;
   for (const it of items) {
     const tool = String(it.도구 || it.tool || ""), args = it.인자 || it.args || {};
     if (!ACTIONS[tool]) continue;
-    const card = { who: "bot", bot_id: b.id, kind: "action", text: describe(tool, args), data: { tool, args } };
+    const card = { who: "bot", bot_id: b.id, kind: "action", text: describe(tool, args), data: { ...(job ? { job } : {}), ...botData(b), tool, args } };
     if (b.perm === "off") addMsg(roomId, { ...card, status: "blocked" });
     else if (b.perm === "auto") {
       const aid = addMsg(roomId, { ...card, status: "running" });
@@ -294,4 +349,4 @@ function due() {
 }
 function startLoop() { due(); setInterval(due, 30 * 1000).unref(); }
 
-module.exports = { init, bots, saveBot, removeBot, rooms, saveRoom, removeRoom, messages, send, stop, clear, act, deny, due, startLoop, busy, takeBlock, ACTIONS };
+module.exports = { decide, MAX_ROUNDS, init, bots, saveBot, removeBot, rooms, saveRoom, removeRoom, messages, send, stop, clear, act, deny, due, startLoop, busy, takeBlock, ACTIONS };

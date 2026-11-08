@@ -87,9 +87,10 @@ app.on("browser-window-created", (_e, win) => {
       calls.length = 0;
       check("화면: 보내기 버튼", await until(async () => js(`!!$("botSend")`)));
       await js(`$("botInput").value = "견적서 비교해서 정리하고 문서로 남겨 줘"; $("botSend").click(); 0`);
-      const ok = await until(async () => (await msgs(room.id)).some((x) => x.data.step === "sum" && x.status === ""), 12000);
-      m = await msgs(room.id);
-      const plan = m.filter((x) => x.data.step === "plan").pop(), tasks = m.filter((x) => x.data.step === "task"), sum = m.find((x) => x.data.step === "sum");
+      const lastJob = async () => { const x = await msgs(room.id); return x.filter((y) => y.data.job === x.filter((z) => z.who === "user").pop().id); };
+      const ok = await until(async () => (await lastJob()).some((x) => x.data.final && x.status === ""), 12000);
+      m = await lastJob();
+      const plan = m.find((x) => x.data.step === "plan"), tasks = m.filter((x) => x.data.step === "task"), sum = m.find((x) => x.data.final);
       check("팀장 계획: 블록은 지우고 계획만 보임", ok && plan && /나눠 맡깁니다/.test(plan.text) && !/팀작업/.test(plan.text), plan && plan.text);
       check("팀원 2명에게 맡김 (없는 봇은 무시)", tasks.length === 2 && tasks.map((t) => t.bot_id).sort().join() === [id["조사"], id["검토"]].sort().join());
       const tc = calls.filter((c) => c.who === "조사" || c.who === "검토");
@@ -103,13 +104,18 @@ app.on("browser-window-created", (_e, win) => {
       check("권한 물어보고: 팀장의 문서 저장은 허용 카드", a("팀장") && a("팀장").status === "pending" && /문서 저장: “견적 비교”/.test(a("팀장").text));
       await until(async () => /허용/.test(await js(`$("botMsgs").innerText`)));
       const html = await js(`$("botMsgs").innerText`);
-      check("화면: 단계 표시 · 근거 링크 · 허용/거절", /계획/.test(html) && /맡은 일/.test(html) && /최종 답/.test(html) && /거절/.test(html) && await js(`!!$("botMsgs").querySelector('a.doc[data-doc="1"]')`));
+      check("화면: 단계 표시 · 근거 링크 · 허용/거절", /계획/.test(html) && /맡은 일/.test(html) && /최종 결과/.test(html) && /판단해 주세요/.test(html) && /거절/.test(html) && await js(`!!$("botMsgs").querySelector('a.doc[data-doc="1"]')`));
       if (process.env.MCB_SNAP) { win.setSize(1280, 860); await wait(600); fs.writeFileSync(path.join(process.env.MCB_SNAP, "bots.png"), (await win.webContents.capturePage()).toPNG()); }
       await js(`$("botMsgs").querySelector('[data-allow][data-v="1"]').click(); 0`);
       await until(async () => (await msgs(room.id)).find((x) => x.id === a("팀장").id).status === "done");
       check("허용하면 MyDocSearch에 문서 저장", seen.some((s) => s.name === "save_document" && s.args.title === "견적 비교"));
       check("한 번 처리한 작업은 다시 못 함", (await api("/api/bots/act", { msg: a("팀장").id, allow: true })).ok === false);
 
+      // 진행 상황 패널 · 판단
+      const mon = await js(`$("botMon").innerText`);
+      check("진행 상황: 단계·작업·판단 기다림", /판단 기다림/.test(mon) && /계획/.test(mon) && /맡은 일/.test(mon) && /견적서를 찾아/.test(mon) && /최종 결과/.test(mon), mon.slice(0, 200));
+      await js(`$("botMon").querySelector("[data-approve]").click(); 0`);
+      check("승인 → 승인함", await until(async () => /승인함/.test(await js(`$("botMon").innerText`)) && /✅ 승인함/.test(await js(`$("botMsgs").innerText`))));
       // 근거 링크 → MyDocSearch 뷰어
       await js(`$("botMsgs").querySelector('a.doc[data-doc="1"]').click(); 0`);
       check("근거 링크: MyDocSearch에서 열기", await until(async () => seen.some((s) => s.name === "show_document" && s.args.id === 1 && s.args.chunk === 1)));
@@ -134,7 +140,8 @@ app.on("browser-window-created", (_e, win) => {
       await until(async () => (await api("/api/bots")).rooms[0].busy);
       await wait(400);
       check("일하는 중: 멈추기 버튼", await js(`!!$("botStop")`));
-      await js(`$("botStop").click(); 0`);
+      check("진행 상황: 진행 중 · 멈추기", /진행 중/.test(await js(`$("botMon").innerText`)));
+      await js(`window.confirm = () => true; $("botStop").click(); 0`);
       await until(async () => !(await api("/api/bots")).rooms[0].busy);
       m = await msgs(room.id);
       check("멈추기: 멈췄습니다", m.slice(-1)[0].status === "stopped", m.slice(-1)[0].text);

@@ -82,8 +82,15 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
       const who = (opts.system.match(/봇 “([^”]+)”/) || [])[1];
       calls.push({ who, provider, prompt, system: opts.system });
       const done = (text) => setTimeout(() => resolve({ ok: true, text, tools: [], model: "가짜", seconds: 0.1 }), 30);
+      if (who === "팀장" && /임시 시험/.test(prompt)) {
+        if (!/팀원들의 결과/.test(prompt)) return done("번역가를 따로 둡니다\n```팀작업\n[{\"봇\": \"번역가\", \"역할\": \"영어 번역\", \"일\": \"영문 번역\"}]\n```");
+        if (!/2차 ·/.test(prompt)) return done("숫자 확인이 빠졌습니다\n```팀작업\n[{\"봇\": \"조사\", \"일\": \"숫자 다시 확인\"}]\n```");
+        return done("결론: 끝\n```팀작업\n[{\"봇\": \"조사\", \"일\": \"더\"}]\n```");
+      }
       if (who === "팀장" && /팀원들의 결과/.test(prompt)) return done("최종\n```앱작업\n[{\"도구\": \"save_document\", \"인자\": {\"title\": \"t\", \"markdown\": \"m\"}}]\n```");
       if (who === "팀장") return done("나눕니다\n```팀작업\n[{\"봇\": \"조사\", \"일\": \"찾기\"}]\n```");
+      if (who === "번역가") return done("translated");
+      if (who === "조사" && /숫자 다시 확인|더/.test(prompt)) return done("숫자 맞음");
       if (who === "조사") return done("찾음\n```앱작업\n{\"도구\": \"delete_everything\", \"인자\": {}}\n```\n```앱작업\n{\"도구\": \"create_collection\", \"인자\": {\"name\": \"모음\"}}\n```");
       done("?");
     }),
@@ -110,6 +117,30 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   await bots.act(pend.id);
   check("허용하면 함", bots.messages(room).find((m) => m.id === pend.id).status === "done" && seen.some((s) => s.name === "save_document"));
   check("화면에 바뀜 알림", events.some((e) => e.type === "bot" && e.room === room));
+
+  // 알아서 진행: 임시 팀원 · 검토 뒤 다시 맡기기 · 마지막 차수에는 더 나누지 않음 · 판단
+  const fin1 = msgs.find((m) => m.data.final);
+  check("최종 결과는 판단 기다림 · 단계 기록(시작·끝 시각)", fin1 && fin1.data.review === "wait" && msgs.filter((m) => m.data.job).every((m) => m.kind === "action" || (m.data.started && m.data.ended)), JSON.stringify(fin1 && fin1.data));
+  calls.length = 0;
+  bots.send(room, "임시 시험");
+  await until(() => !bots.busy());
+  let mm = bots.messages(room);
+  const job2 = mm.filter((m) => m.who === "user").pop().id;
+  const j2 = mm.filter((m) => m.data.job === job2 && m.kind === "msg");
+  const tempMsg = j2.find((m) => m.data.temp);
+  check("임시 팀원: 팀장이 만든 번역가가 팀장 AI로 일함", tempMsg && tempMsg.data.temp.name === "번역가" && tempMsg.bot_id === null && calls.find((c) => c.who === "번역가").provider === "claude", JSON.stringify(tempMsg && tempMsg.data));
+  check("검토 뒤 2차로 다시 맡김", j2.some((m) => m.data.step === "review" && m.data.round === 1 && m.data.assigned === 1) && j2.some((m) => m.data.step === "task" && m.data.round === 2), j2.map((m) => `${m.data.step}${m.data.round || ""}`).join(","));
+  check(`최대 ${bots.MAX_ROUNDS}차: 마지막엔 블록이 와도 최종 결과`, j2.filter((m) => m.data.step === "task").length === 3 && j2.slice(-1)[0].data.final && /최종 결과를 쓰세요/.test(calls.slice(-1)[0].prompt), j2.length);
+  check("팀장에게 되묻지 말고 진행하라는 지시", calls.every((c) => /되묻지 말고/.test(c.system)));
+  const fin2 = j2.slice(-1)[0];
+  check("승인", bots.decide(fin2.id, "approve").ok && bots.messages(room).find((m) => m.id === fin2.id).data.review === "approved");
+  check("한 번 판단한 결과는 다시 못 함", !bots.decide(fin2.id, "approve").ok);
+  check("수정 요청은 의견이 있어야", !bots.decide(fin1.id, "revise", " ").ok);
+  calls.length = 0;
+  check("수정 요청 → 팀장이 의견을 받아 다시 진행", bots.decide(fin1.id, "revise", "표로 바꿔 줘").ok);
+  await until(() => !bots.busy());
+  mm = bots.messages(room);
+  check("수정 요청: 기록 · 새 일", mm.find((m) => m.id === fin1.id).data.review === "revise" && /수정 요청: 표로 바꿔 줘/.test(calls[0].prompt) && mm.filter((m) => m.data.final).length === 3);
 
   off = true; calls.length = 0;
   bots.send(room, "다시");

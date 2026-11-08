@@ -1,6 +1,6 @@
 {
   "name": "mycollaboratorbots",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "여러 AI 봇을 한 팀으로 — 팀장 봇이 일을 나눠 팀원 봇에게 맡기고 결과를 모아 답하는 데스크톱 앱 (내 문서 검색과 연동)",
   "main": "src/main.js",
   "scripts": {
